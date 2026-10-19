@@ -29,6 +29,9 @@
     document.querySelectorAll('[data-biz="city"]').forEach(function (el) { el.textContent = BIZ.city; });
     document.querySelectorAll('[data-biz="address"]').forEach(function (el) { el.textContent = BIZ.address; });
     document.querySelectorAll('[data-biz="phone"]').forEach(function (el) { el.textContent = BIZ.phone; });
+    /* tap-to-call must dial the personalized number, not the hardcoded default (fleet standard 2026-10-16):
+       digits-and-plus-only in the href so a hostile ?phone= param can't smuggle markup/JS. */
+    document.querySelectorAll('#call-cta, a[data-biz="phone"]').forEach(function (el) { el.setAttribute('href', 'tel:' + String(BIZ.phone).replace(/[^+\d]/g, '')); });
     document.querySelectorAll('[data-biz="host"]').forEach(function (el) { el.textContent = BIZ.host; });
     document.querySelectorAll('[data-biz="host-initial"]').forEach(function (el) { el.textContent = BIZ.host.charAt(0); });
     document.title = BIZ.name + ' — ' + BIZ.tagline + ' | ' + BIZ.city;
@@ -252,6 +255,14 @@
     });
   }
 
+  /* ---------- tap-to-call helper (fleet standard, 2026-10-16) ----------
+     href is digits-and-plus-only (XSS-safe even from a hostile ?phone= param);
+     the visible text reuses the normal phone escaping. */
+  function callLinkHtml() {
+    var href = 'tel:' + String(BIZ.phone).replace(/[^+\d]/g, '');
+    return '<a class="call-link" href="' + escapeHtml(href) + '">&#128222; Call ' + escapeHtml(BIZ.phone) + '</a>';
+  }
+
   /* ---------- bot speech ---------- */
   function say(html, chips, opts) {
     showTyping();
@@ -445,7 +456,7 @@
         escapeHtml(S.booking.day) + ' at <b>' + escapeHtml(time) + '</b><br>For: <b>' + escapeHtml(S.booking.interest) + '</b><br>Name: <b>' + escapeHtml(S.booking.name) + '</b><br>' +
         'Reference: <span class="ref">' + ref + '</span><br><br>';
       if (S.booking.phone) line += 'We\'ll text your reminder. ';
-      line += 'Our crew brings the ladder &mdash; you just bring the questions. Anything else I can help with?';
+      line += 'Our crew brings the ladder &mdash; you just bring the questions. Anything else I can help with?<br><br>Prefer to talk it through? ' + callLinkHtml();
       S.mode = 'idle'; S.step = 0;
       return say(line, [{ label: '&#127968; Our services' }, { label: '&#128336; Hours & location' }]);
     }
@@ -584,10 +595,10 @@
     if (has(t, 'price', 'cost', 'how much', 'expensive', 'cheap', '$$', 'what does it run', 'financ')) return say(priceHtml(), [{ label: '&#127968; Our services' }, { label: '&#128197; Book free inspection' }]);
     if (has(t, 'hour', 'open', 'close', 'when do you', 'what time')) return say(hoursHtml(), [{ label: '&#128197; Book free inspection' }]);
     if (has(t, 'where', 'address', 'location', 'direction', 'find you', 'service area', 'based', 'serve')) {
-      return say('Find us at <b>' + escapeHtml(BIZ.address) + '</b> &mdash; free parking out front. &#128205;<br><br>Call us anytime: <b>' + escapeHtml(BIZ.phone) + '</b>',
+      return say('Find us at <b>' + escapeHtml(BIZ.address) + '</b> &mdash; free parking out front. &#128205;<br><br>' + callLinkHtml() + ' &mdash; we&rsquo;re happy to help anytime.',
         [{ label: '&#128197; Book free inspection' }]);
     }
-    if (has(t, 'human', 'person', 'real person', 'call you', 'phone number', 'speak to', 'crew', 'owner')) return say('Of course &mdash; call us at <b>' + escapeHtml(BIZ.phone) + '</b> during open hours and a real human picks up. But honestly? I can handle <b>inspections, pricing, and storm claims</b> right here, even at 2 AM. &#128521;', defaultChips());
+    if (has(t, 'human', 'person', 'real person', 'call you', 'phone number', 'speak to', 'crew', 'owner')) return say('Of course &mdash; ' + callLinkHtml() + ' during open hours and a real human picks up. But honestly? I can handle <b>inspections, pricing, and storm claims</b> right here, even at 2 AM. &#128521;', defaultChips());
     if (has(t, 'thank', 'thanks', 'thx', 'great', 'awesome', 'perfect')) return say('Anytime! That&rsquo;s what I&rsquo;m here for. &#127968;', defaultChips());
     if (has(t, 'bye', 'goodbye', 'see you', 'later')) { S.mode = 'idle'; return say('Stay dry up there &mdash; see you soon at ' + escapeHtml(BIZ.name) + '! &#127968;'); }
     if (/\b(hi+|hello|hey+|hola|yo)\b/.test(t) || has(t, 'good morning', 'good evening')) return say('Hey hey! &#128075; What can I do for you &mdash; <b>storm damage</b>, <b>replacements</b>, or shall I <b>book your free inspection</b>?', defaultChips());

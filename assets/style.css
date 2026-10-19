@@ -129,6 +129,12 @@ footer b{color:#fff}
 .gbtn{display:inline-block;background:var(--brand);color:#fff;text-decoration:none;border-radius:999px;padding:10px 20px;font-size:14px;font-weight:600;margin-top:6px}
 .gbtn:hover{background:var(--brand-dk)}
 
+/* ---------- tap-to-call (fleet standard 2026-10-16) ---------- */
+.call-cta{margin-top:16px;background:var(--brand);color:#fff;box-shadow:0 8px 20px rgba(201,90,30,.35)}
+.call-cta:hover{transform:translateY(-2px);background:var(--brand-dk);color:#fff}
+.call-link{font-weight:700;color:var(--brand-dk);text-decoration:none;border-bottom:2px solid var(--brand)}
+.call-link:hover{border-color:var(--brand-dk)}
+
 /* ---------- captured-leads inbox preview ---------- */
 .inbox-card .btn{margin-top:14px}
 .inbox-count{display:inline-block;min-width:26px;padding:1px 9px;margin-left:6px;border-radius:999px;background:var(--brand-lt);color:var(--brand-dk);font-size:13px;font-weight:700}
