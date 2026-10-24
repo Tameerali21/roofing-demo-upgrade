@@ -150,10 +150,11 @@
 
   /* conversation state */
   var S = {
-    mode: 'idle',          // idle | booking | afterhours | review
+    mode: 'idle',          // idle | booking | afterhours | review | quiz
     step: 0,
     booking: {},
     ah: {},
+    quiz: {},
     lastTopic: null
   };
 
@@ -377,7 +378,8 @@
       { label: '&#127968; Our services' },
       { label: '&#128197; Book free inspection' },
       { label: '&#127769; After-hours demo' },
-      { label: '&#11088; Rate your experience' }
+      { label: '&#11088; Rate your experience' },
+      { label: '&#129522; 60-sec roof quiz', value: 'quiz' }
     ];
   }
 
@@ -576,12 +578,91 @@
       [{ label: '&#128197; Book free inspection' }, { label: 'No thanks', value: 'no thanks' }]);
   }
 
+  /* ---------- 60-sec roof quiz (lead-capture, fleet port 2026-10-24) ----------
+     HONESTY (hard rule): Cole NEVER invents prices, outcomes, availability, or
+     guarantees — the quiz promises a personalized roof plan plus a free inspection
+     and an exact written quote AT THE VISIT, never fabricated specifics. */
+  var QUIZ_CONCERNS = ['Storm / hail damage', 'Leak or water stain', 'Old roof replacement', 'Metal vs shingle', 'Gutters & flashing'];
+  var QUIZ_TIMELINES = ['ASAP', 'This week', 'This month', 'Just exploring'];
+
+  function canonChoice(t, options) {
+    var tl = t.toLowerCase();
+    for (var i = 0; i < options.length; i++) {
+      if (tl === options[i].toLowerCase()) return options[i];
+    }
+    return t.trim().slice(0, 60); /* free text accepted, length-capped */
+  }
+
+  function startQuiz() {
+    S.mode = 'quiz'; S.step = 0; S.quiz = {};
+    return say('The <b>60-second roof quiz!</b> &#129522;<br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>roof profile</b> &mdash; then I&rsquo;ll put together a <b>personalized roof plan</b> for your home. No spam, no guesswork.<br><br>' +
+      '<b>What&rsquo;s going on with your roof?</b>',
+      QUIZ_CONCERNS.map(function (c) { return { label: c }; }));
+  }
+
+  function quizStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.quiz.concern = canonChoice(t, QUIZ_CONCERNS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.quiz.concern) + '</b>. &#127968;<br><br><b>When</b> are you thinking of getting it looked at?',
+        QUIZ_TIMELINES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.quiz.timeline = canonChoice(t, QUIZ_TIMELINES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.quiz.timeline) + '</b>. &#127968;<br><br><b>What&rsquo;s your name</b> for the roof profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the roof profile?');
+      }
+      S.quiz.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your roof plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.quiz.phone = t;
+      return finishQuiz();
+    }
+  }
+
+  function finishQuiz() {
+    var q = S.quiz;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Roof quiz — qualified lead',
+      details: 'Concern ' + q.concern + ' · Timeline ' + q.timeline,
+      source: 'roof quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.quiz = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#129522;<br><br>Here&rsquo;s your roof profile:' },
+      {
+        dash: [
+          ['Concern', q.concern],
+          ['Timeline', q.timeline]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together your <b>personalized roof plan</b> and send it to your number. ' +
+          'Your <b>free inspection</b> produces an <b>exact written quote</b> before any work starts &mdash; <b>no surprise bills</b>, ever. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes an inspection</b>, not a job lost to the roofer down the street. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
 
     if (S.mode === 'booking') return bookingStep(text);
     if (S.mode === 'afterhours') return afterHoursStep(text);
+    if (S.mode === 'quiz') return quizStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'schedul', 'appoint', 'sign me up', 'slot', 'i need an inspection', 'need an inspection', 'get a quote', 'need a quote', 'want a quote', 'get an estimate', 'check my roof', 'look at my roof', 'free inspection')) return startBooking();
@@ -592,6 +673,12 @@
     if (has(t, 'repair', 'fix', 'leak', 'drip', 'patch', 'missing', 'curling', 'flashing', 'gutter')) return say(repairHtml(), [{ label: '&#128197; Book free inspection' }, { label: '&#129309; Pricing' }]);
     if (has(t, 'inspect', 'checkup', 'assessment', 'estimate')) return say(inspectionHtml(), [{ label: '&#128197; Book free inspection' }]);
     if (has(t, 'review', 'rate', 'stars', 'feedback')) return startReview();
+    /* 60-sec roof quiz: word-start keywords only — audited 2026-10-24 that NO
+       roofing router keyword starts with 'qui', so the chip value 'quiz' can
+       never be hijacked, and none of the trigger phrases word-start-match an
+       existing keyword (the word-start 'buy' prefix bug class caught on
+       real-estate, 2026-10-20, does not apply here). */
+    if (has(t, 'quiz', 'roof quiz', 'find my roof', 'match quiz')) return startQuiz();
     if (has(t, 'price', 'cost', 'how much', 'expensive', 'cheap', '$$', 'what does it run', 'financ')) return say(priceHtml(), [{ label: '&#127968; Our services' }, { label: '&#128197; Book free inspection' }]);
     if (has(t, 'hour', 'open', 'close', 'when do you', 'what time')) return say(hoursHtml(), [{ label: '&#128197; Book free inspection' }]);
     if (has(t, 'where', 'address', 'location', 'direction', 'find you', 'service area', 'based', 'serve')) {
