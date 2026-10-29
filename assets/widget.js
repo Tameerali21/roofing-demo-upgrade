@@ -150,11 +150,12 @@
 
   /* conversation state */
   var S = {
-    mode: 'idle',          // idle | booking | afterhours | review | quiz
+    mode: 'idle',          // idle | booking | afterhours | review | quiz | prep
     step: 0,
     booking: {},
     ah: {},
     quiz: {},
+    prep: {},
     lastTopic: null
   };
 
@@ -379,7 +380,8 @@
       { label: '&#128197; Book free inspection' },
       { label: '&#127769; After-hours demo' },
       { label: '&#11088; Rate your experience' },
-      { label: '&#129522; 60-sec roof quiz', value: 'quiz' }
+      { label: '&#129522; 60-sec roof quiz', value: 'quiz' },
+      { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' }
     ];
   }
 
@@ -656,6 +658,79 @@
     ]);
   }
 
+  /* ---------- 60-sec consult-prep quiz (fleet second-quiz port, 2026-10-29) ----------
+     Adapted to roofing's own state machine (S.mode='prep', prepStep,
+     finishPrepQuiz) — not HVAC's step.flow pattern.
+     HONESTY (hard rule): Cole NEVER invents prices, outcomes, availability, or
+     guarantees — the quiz promises a personalized roof plan plus a free
+     inspection and an exact written quote AT THE VISIT, plus what to have
+     ready for the visit, never fabricated specifics. */
+  var PREP_PRIORS = ['Never had roof work', 'Had repairs before', 'Had a full replacement before'];
+  var PREP_PRIORITIES = ['Stop leaks fast', 'Storm-proof my roof', 'Lower energy bills', 'Boost curb appeal'];
+
+  function startPrepQuiz() {
+    S.mode = 'prep'; S.step = 0; S.prep = {};
+    return say('The <b>60-second consult-prep quiz!</b> &#128203;<br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>consult-prep profile</b> &mdash; then I&rsquo;ll put together a <b>personalized roof plan</b> for your home, plus what to have ready for your visit. No spam, no guesswork.<br><br>' +
+      '<b>First: what&rsquo;s your roofing experience?</b>',
+      PREP_PRIORS.map(function (c) { return { label: c }; }));
+  }
+
+  function prepStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.prep.prior = canonChoice(t, PREP_PRIORS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.prep.prior) + '</b>. &#128203;<br><br><b>What matters most</b> for your visit?',
+        PREP_PRIORITIES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.prep.priority = canonChoice(t, PREP_PRIORITIES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.prep.priority) + '</b> it is. &#128203;<br><br><b>What&rsquo;s your name</b> for the consult-prep profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the consult-prep profile?');
+      }
+      S.prep.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your roof plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.prep.phone = t;
+      return finishPrepQuiz();
+    }
+  }
+
+  function finishPrepQuiz() {
+    var q = S.prep;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Consult-prep quiz — qualified lead',
+      details: 'Prior ' + q.prior + ' · Priority ' + q.priority,
+      source: 'consult-prep quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.prep = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#128203;<br><br>Here&rsquo;s your consult-prep profile:' },
+      {
+        dash: [
+          ['Prior', q.prior],
+          ['Priority', q.priority]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together your <b>personalized roof plan</b> built around your priority and send it to your number, plus what to have ready for the visit (photos of any leaks or damage and your roof&rsquo;s approximate age, if you have them handy), so the visit is all signal, no guesswork. ' +
+          'Your <b>free inspection</b> produces an <b>exact written quote</b> before any work starts &mdash; <b>no surprise bills</b>, ever. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes an inspection</b>, not a job lost to the roofer down the street. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -663,6 +738,7 @@
     if (S.mode === 'booking') return bookingStep(text);
     if (S.mode === 'afterhours') return afterHoursStep(text);
     if (S.mode === 'quiz') return quizStep(text);
+    if (S.mode === 'prep') return prepStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'schedul', 'appoint', 'sign me up', 'slot', 'i need an inspection', 'need an inspection', 'get a quote', 'need a quote', 'want a quote', 'get an estimate', 'check my roof', 'look at my roof', 'free inspection')) return startBooking();
@@ -673,6 +749,12 @@
     if (has(t, 'repair', 'fix', 'leak', 'drip', 'patch', 'missing', 'curling', 'flashing', 'gutter')) return say(repairHtml(), [{ label: '&#128197; Book free inspection' }, { label: '&#129309; Pricing' }]);
     if (has(t, 'inspect', 'checkup', 'assessment', 'estimate')) return say(inspectionHtml(), [{ label: '&#128197; Book free inspection' }]);
     if (has(t, 'review', 'rate', 'stars', 'feedback')) return startReview();
+    /* 60-sec consult-prep quiz: trigger BEFORE the roof-quiz trigger — the chip
+       value 'prep quiz' contains 'quiz', so the roof quiz's word-start 'quiz'
+       match would otherwise hijack it into the roof quiz (the word-start 'buy'
+       prefix bug class caught on real-estate, 2026-10-20). Bare 'prep' alone
+       triggers nothing. */
+    if (has(t, 'prep quiz', 'consult prep quiz')) return startPrepQuiz();
     /* 60-sec roof quiz: word-start keywords only — audited 2026-10-24 that NO
        roofing router keyword starts with 'qui', so the chip value 'quiz' can
        never be hijacked, and none of the trigger phrases word-start-match an
