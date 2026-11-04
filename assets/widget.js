@@ -156,6 +156,7 @@
     ah: {},
     quiz: {},
     prep: {},
+    storm: {},
     lastTopic: null
   };
 
@@ -381,7 +382,8 @@
       { label: '&#127769; After-hours demo' },
       { label: '&#11088; Rate your experience' },
       { label: '&#129522; 60-sec roof quiz', value: 'quiz' },
-      { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' }
+      { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
+      { label: '&#128737; 60-sec storm-ready quiz', value: 'storm quiz' }
     ];
   }
 
@@ -731,6 +733,79 @@
     ]);
   }
 
+  /* ---------- 60-sec storm-ready quiz (fleet third-quiz port, 2026-11-04) ----------
+     Adapted to roofing's own state machine (S.mode='storm', stormStep,
+     finishStormQuiz) — not another niche's step.flow pattern.
+     HONESTY (hard rule): Cole NEVER invents prices, outcomes, availability, or
+     guarantees — the quiz promises a personalized storm-ready plan plus a free
+     inspection and an exact written quote AT THE VISIT, plus what to have
+     ready for the visit, never fabricated specifics. */
+  var STORM_ROOFS = ['Shingle', 'Metal', 'Tile', 'Not sure yet'];
+  var STORM_WORRIES = ['Leaks', 'Hail damage', 'Wind / missing shingles', 'Old roof age'];
+
+  function startStormQuiz() {
+    S.mode = 'storm'; S.step = 0; S.storm = {};
+    return say('The <b>60-second storm-ready quiz!</b> &#128737;<br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>storm-ready profile</b> &mdash; then I&rsquo;ll put together a <b>personalized storm-ready plan</b> for your home, plus what to have ready for your visit. No spam, no guesswork.<br><br>' +
+      '<b>First: what kind of roof</b> is on your home?',
+      STORM_ROOFS.map(function (c) { return { label: c }; }));
+  }
+
+  function stormStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.storm.roof = canonChoice(t, STORM_ROOFS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.storm.roof) + '</b>. &#128737;<br><br><b>What worries you most</b> when a storm rolls in?',
+        STORM_WORRIES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.storm.worry = canonChoice(t, STORM_WORRIES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.storm.worry) + '</b> it is. &#128737;<br><br><b>What&rsquo;s your name</b> for the storm-ready profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the storm-ready profile?');
+      }
+      S.storm.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your storm-ready plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.storm.phone = t;
+      return finishStormQuiz();
+    }
+  }
+
+  function finishStormQuiz() {
+    var q = S.storm;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Storm-ready quiz — qualified lead',
+      details: 'Roof ' + q.roof + ' · Worry ' + q.worry,
+      source: 'storm quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.storm = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#128737;<br><br>Here&rsquo;s your storm-ready profile:' },
+      {
+        dash: [
+          ['Roof', q.roof],
+          ['Worry', q.worry]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together your <b>personalized storm-ready plan</b> built around your worry and send it to your number, plus what to have ready for the visit (photos of any damage and your roof&rsquo;s approximate age, if you have them handy), so the visit is all signal, no guesswork. ' +
+          'Your <b>free inspection</b> produces an <b>exact written quote</b> before any work starts &mdash; <b>no surprise bills</b>, ever. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes an inspection</b>, not a job lost to the roofer down the street. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -739,10 +814,18 @@
     if (S.mode === 'afterhours') return afterHoursStep(text);
     if (S.mode === 'quiz') return quizStep(text);
     if (S.mode === 'prep') return prepStep(text);
+    if (S.mode === 'storm') return stormStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'schedul', 'appoint', 'sign me up', 'slot', 'i need an inspection', 'need an inspection', 'get a quote', 'need a quote', 'want a quote', 'get an estimate', 'check my roof', 'look at my roof', 'free inspection')) return startBooking();
     if (has(t, 'after hour', 'after-hour', 'closed', 'late night', 'midnight', '11:42')) return startAfterHours();
+    /* 60-sec storm-ready quiz: trigger BEFORE the storm-damage branch — the chip
+       value 'storm quiz' starts with 'storm', so the storm branch would otherwise
+       hijack it into stormHtml (the word-start 'buy' prefix bug class caught on
+       real-estate, 2026-10-20). Bare 'storm' alone does NOT match the phrase
+       'storm quiz', so the storm branch stays intact. Also before the prep/roof
+       quiz triggers, which would hijack it via the word-start 'quiz' match. */
+    if (has(t, 'storm quiz', 'storm-ready quiz')) return startStormQuiz();
     if (has(t, 'storm', 'hail', 'tornado', 'wind damage', 'hurricane', 'insurance', 'claim', 'adjuster')) return say(stormHtml(), [{ label: '&#128197; Book free inspection' }, { label: '&#127968; Our services' }]);
     if (has(t, 'metal', 'shingle', 'standing seam', 'material', 'what kind of roof', 'asphalt')) return say(metalHtml(), [{ label: '&#128197; Book free inspection' }, { label: '&#127968; Our services' }]);
     if (has(t, 'replac', 'new roof', 'old roof', 'roof age', 'how old', 'lifespan', 'reroof')) return say(replacementHtml(), [{ label: '&#128197; Book free inspection' }, { label: '&#129309; Pricing' }]);
