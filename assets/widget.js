@@ -157,6 +157,7 @@
     quiz: {},
     prep: {},
     storm: {},
+    replace: {},
     lastTopic: null
   };
 
@@ -383,7 +384,8 @@
       { label: '&#11088; Rate your experience' },
       { label: '&#129522; 60-sec roof quiz', value: 'quiz' },
       { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
-      { label: '&#128737; 60-sec storm-ready quiz', value: 'storm quiz' }
+      { label: '&#128737; 60-sec storm-ready quiz', value: 'storm quiz' },
+      { label: '&#128260; 60-sec replacement quiz', value: 'replacement quiz' }
     ];
   }
 
@@ -806,6 +808,79 @@
     ]);
   }
 
+  /* ---------- 60-sec replacement quiz (fleet fourth-quiz port, 2026-11-09) ----------
+     Adapted to roofing's own state machine (S.mode='replace', replaceStep,
+     finishReplaceQuiz) — not another niche's step.flow pattern.
+     HONESTY (hard rule): Cole NEVER invents prices, outcomes, availability, or
+     guarantees — the quiz promises a personalized replacement plan plus a free
+     inspection and an exact written quote AT THE VISIT, plus what to have
+     ready for the visit, never fabricated specifics. */
+  var REPLACE_AGES = ['Under 10 years', '10–20 years', 'Over 20 years', 'Not sure'];
+  var REPLACE_TIMELINES = ['This month', 'Next 1–3 months', 'Just planning ahead', 'Not sure yet'];
+
+  function startReplaceQuiz() {
+    S.mode = 'replace'; S.step = 0; S.replace = {};
+    return say('The <b>60-second replacement quiz!</b> &#128260;<br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>replacement profile</b> &mdash; then I&rsquo;ll put together a <b>personalized replacement plan</b> for your home, plus what to have ready for your visit. No spam, no guesswork.<br><br>' +
+      '<b>First: how old</b> is the roof on your home?',
+      REPLACE_AGES.map(function (c) { return { label: c }; }));
+  }
+
+  function replaceStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.replace.age = canonChoice(t, REPLACE_AGES); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.replace.age) + '</b>. &#128260;<br><br><b>When</b> are you thinking of replacing it?',
+        REPLACE_TIMELINES.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.replace.timeline = canonChoice(t, REPLACE_TIMELINES); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.replace.timeline) + '</b> it is. &#128260;<br><br><b>What&rsquo;s your name</b> for the replacement profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the replacement profile?');
+      }
+      S.replace.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your replacement plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.replace.phone = t;
+      return finishReplaceQuiz();
+    }
+  }
+
+  function finishReplaceQuiz() {
+    var q = S.replace;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Replacement quiz — qualified lead',
+      details: 'Age ' + q.age + ' · Timeline ' + q.timeline,
+      source: 'replacement quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.replace = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#128260;<br><br>Here&rsquo;s your replacement profile:' },
+      {
+        dash: [
+          ['Age', q.age],
+          ['Timeline', q.timeline]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together your <b>personalized replacement plan</b> built around your roof&rsquo;s age and timeline and send it to your number, plus what to have ready for the visit (photos of any leaks or damage and your roof&rsquo;s approximate age, if you have them handy), so the visit is all signal, no guesswork. ' +
+          'Your <b>free inspection</b> produces an <b>exact written quote</b> before any work starts &mdash; <b>no surprise bills</b>, ever. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes an inspection</b>, not a job lost to the roofer down the street. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -815,10 +890,20 @@
     if (S.mode === 'quiz') return quizStep(text);
     if (S.mode === 'prep') return prepStep(text);
     if (S.mode === 'storm') return stormStep(text);
+    if (S.mode === 'replace') return replaceStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'schedul', 'appoint', 'sign me up', 'slot', 'i need an inspection', 'need an inspection', 'get a quote', 'need a quote', 'want a quote', 'get an estimate', 'check my roof', 'look at my roof', 'free inspection')) return startBooking();
     if (has(t, 'after hour', 'after-hour', 'closed', 'late night', 'midnight', '11:42')) return startAfterHours();
+    /* 60-sec replacement quiz: trigger FIRST among quiz triggers — the chip
+       value 'replacement quiz' starts with 'replac', so the replacement-info
+       branch would otherwise hijack it into replacementHtml, and it contains
+       'quiz', so the roof quiz's word-start 'quiz' match would hijack it too
+       (the word-start 'buy' prefix bug class caught on real-estate,
+       2026-10-20). Bare 'replacement' alone does NOT match the phrase
+       'replacement quiz', so the replacement branch stays intact. Alias
+       'replace quiz' rides the same trigger. */
+    if (has(t, 'replacement quiz', 'replace quiz')) return startReplaceQuiz();
     /* 60-sec storm-ready quiz: trigger BEFORE the storm-damage branch — the chip
        value 'storm quiz' starts with 'storm', so the storm branch would otherwise
        hijack it into stormHtml (the word-start 'buy' prefix bug class caught on
