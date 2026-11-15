@@ -385,7 +385,8 @@
       { label: '&#129522; 60-sec roof quiz', value: 'quiz' },
       { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
       { label: '&#128737; 60-sec storm-ready quiz', value: 'storm quiz' },
-      { label: '&#128260; 60-sec replacement quiz', value: 'replacement quiz' }
+      { label: '&#128260; 60-sec replacement quiz', value: 'replacement quiz' },
+      { label: '&#129534; 60-sec insurance-claim quiz', value: 'insurance quiz' }
     ];
   }
 
@@ -881,6 +882,80 @@
     ]);
   }
 
+  /* ---------- 60-sec insurance-claim quiz (fleet fifth-quiz port, 2026-11-14) ----------
+     Adapted to roofing's own state machine (S.mode='insurance', insuranceStep,
+     finishInsuranceQuiz) — not another niche's step.flow pattern.
+     HONESTY (hard rule): Cole NEVER invents prices, claim outcomes, approval
+     guarantees, coverage, or availability — the quiz promises a personalized
+     insurance-claim plan plus a free inspection, insurance-ready documentation,
+     and an exact written quote AT THE VISIT, plus what to have ready for the
+     visit, never fabricated specifics. */
+  var INS_DAMAGES = ['Hail damage', 'Wind / missing shingles', 'Leak / water damage', 'Old roof wear'];
+  var INS_CLAIMS = ['Not filed yet', 'Filed — waiting on adjuster', 'Claim denied', 'Just exploring'];
+
+  function startInsuranceQuiz() {
+    S.mode = 'insurance'; S.step = 0; S.insurance = {};
+    return say('The <b>60-second insurance-claim quiz!</b> &#129534;<br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>insurance-claim profile</b> &mdash; then I&rsquo;ll put together a <b>personalized insurance-claim plan</b> for your home, plus what to have ready for your visit. No spam, no guesswork.<br><br>' +
+      '<b>First: what kind of damage</b> are we dealing with?',
+      INS_DAMAGES.map(function (c) { return { label: c }; }));
+  }
+
+  function insuranceStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.insurance.damage = canonChoice(t, INS_DAMAGES); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.insurance.damage) + '</b>. &#129534;<br><br><b>Where does your claim stand</b> right now?',
+        INS_CLAIMS.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.insurance.claim = canonChoice(t, INS_CLAIMS); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.insurance.claim) + '</b> it is. &#129534;<br><br><b>What&rsquo;s your name</b> for the insurance-claim profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the insurance-claim profile?');
+      }
+      S.insurance.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your insurance-claim plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.insurance.phone = t;
+      return finishInsuranceQuiz();
+    }
+  }
+
+  function finishInsuranceQuiz() {
+    var q = S.insurance;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Insurance-claim quiz — qualified lead',
+      details: 'Damage ' + q.damage + ' · Claim ' + q.claim,
+      source: 'insurance quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.insurance = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#129534;<br><br>Here&rsquo;s your insurance-claim profile:' },
+      {
+        dash: [
+          ['Damage', q.damage],
+          ['Claim', q.claim]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together your <b>personalized insurance-claim plan</b> built around your damage and claim status and send it to your number, plus what to have ready for the visit (photos of any damage and your claim number or adjuster letter, if you have them handy), so the visit is all signal, no guesswork. ' +
+          'Your <b>free inspection</b> produces an <b>insurance-ready report</b> for your adjuster and an <b>exact written quote</b> before any work starts &mdash; <b>no surprise bills</b>, ever. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes an inspection</b>, not a job lost to the roofer down the street. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -891,16 +966,25 @@
     if (S.mode === 'prep') return prepStep(text);
     if (S.mode === 'storm') return stormStep(text);
     if (S.mode === 'replace') return replaceStep(text);
+    if (S.mode === 'insurance') return insuranceStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'schedul', 'appoint', 'sign me up', 'slot', 'i need an inspection', 'need an inspection', 'get a quote', 'need a quote', 'want a quote', 'get an estimate', 'check my roof', 'look at my roof', 'free inspection')) return startBooking();
     if (has(t, 'after hour', 'after-hour', 'closed', 'late night', 'midnight', '11:42')) return startAfterHours();
-    /* 60-sec replacement quiz: trigger FIRST among quiz triggers — the chip
-       value 'replacement quiz' starts with 'replac', so the replacement-info
-       branch would otherwise hijack it into replacementHtml, and it contains
-       'quiz', so the roof quiz's word-start 'quiz' match would hijack it too
-       (the word-start 'buy' prefix bug class caught on real-estate,
-       2026-10-20). Bare 'replacement' alone does NOT match the phrase
+    /* 60-sec insurance-claim quiz: trigger FIRST among quiz triggers — the chip
+       value 'insurance quiz' contains 'insurance'/'claim', so the storm-damage
+       branch would otherwise hijack it into stormHtml, and it contains 'quiz',
+       so the roof quiz's word-start 'quiz' match would hijack it too (the
+       word-start 'buy' prefix bug class caught on real-estate, 2026-10-20).
+       Bare 'insurance'/'claim' alone do NOT match the phrase 'insurance quiz',
+       so the storm branch stays intact. Alias 'claim quiz' rides the same trigger. */
+    if (has(t, 'insurance quiz', 'claim quiz')) return startInsuranceQuiz();
+    /* 60-sec replacement quiz: trigger before the storm-quiz trigger AND the
+       replacement-info branch — the chip value 'replacement quiz' starts with
+       'replac', so the replacement branch would otherwise hijack it into
+       replacementHtml, and it contains 'quiz', so the roof quiz's word-start
+       'quiz' match would hijack it too (the word-start 'buy' prefix bug class
+       caught on real-estate, 2026-10-20). Bare 'replacement' alone does NOT match the phrase
        'replacement quiz', so the replacement branch stays intact. Alias
        'replace quiz' rides the same trigger. */
     if (has(t, 'replacement quiz', 'replace quiz')) return startReplaceQuiz();
