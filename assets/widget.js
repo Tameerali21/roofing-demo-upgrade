@@ -386,7 +386,8 @@
       { label: '&#128203; 60-sec consult-prep quiz', value: 'prep quiz' },
       { label: '&#128737; 60-sec storm-ready quiz', value: 'storm quiz' },
       { label: '&#128260; 60-sec replacement quiz', value: 'replacement quiz' },
-      { label: '&#129534; 60-sec insurance-claim quiz', value: 'insurance quiz' }
+      { label: '&#129534; 60-sec insurance-claim quiz', value: 'insurance quiz' },
+      { label: '&#128167; 60-sec gutter quiz', value: 'gutter quiz' }
     ];
   }
 
@@ -956,6 +957,79 @@
     ]);
   }
 
+  /* ---------- 60-sec gutter quiz (fleet sixth-quiz port, 2026-11-20) ----------
+     Adapted to roofing's own state machine (S.mode='gutter', gutterStep,
+     finishGutterQuiz) — not another niche's step.flow pattern.
+     HONESTY (hard rule): Cole NEVER invents prices, outcomes, availability, or
+     guarantees — the quiz promises a personalized gutter plan plus a free
+     inspection and an exact written quote AT THE VISIT, plus what to have
+     ready for the visit, never fabricated specifics. */
+  var GUTTER_SITUATIONS = ['Clogged', 'Leaking', 'Sagging', 'Gutter guards'];
+  var GUTTER_CONCERNS = ['Water pooling by the foundation', 'Overflow in heavy rain', 'Stains or peeling paint', 'Just want a check-up'];
+
+  function startGutterQuiz() {
+    S.mode = 'gutter'; S.step = 0; S.gutter = {};
+    return say('The <b>60-second gutter quiz!</b> &#128167;<br><br>' +
+      'Two quick questions and I&rsquo;ll build your <b>gutter profile</b> &mdash; then I&rsquo;ll put together a <b>personalized gutter plan</b> for your home, plus what to have ready for your visit. No spam, no guesswork.<br><br>' +
+      '<b>First: what&rsquo;s going on</b> with your gutters?',
+      GUTTER_SITUATIONS.map(function (c) { return { label: c }; }));
+  }
+
+  function gutterStep(text) {
+    var t = text.trim();
+    if (S.step === 0) {
+      S.gutter.gutter = canonChoice(t, GUTTER_SITUATIONS); S.step = 1;
+      return say('Got it &mdash; <b>' + escapeHtml(S.gutter.gutter) + '</b>. &#128167;<br><br><b>What worries you most</b> about your gutters?',
+        GUTTER_CONCERNS.map(function (x) { return { label: x }; }));
+    }
+    if (S.step === 1) {
+      S.gutter.concern = canonChoice(t, GUTTER_CONCERNS); S.step = 2;
+      return say('Noted &mdash; <b>' + escapeHtml(S.gutter.concern) + '</b> it is. &#128167;<br><br><b>What&rsquo;s your name</b> for the gutter profile?');
+    }
+    if (S.step === 2) {
+      if (t.length < 2 || t.length > 40) {
+        return say('And your <b>name</b> for the gutter profile?');
+      }
+      S.gutter.name = t; S.step = 3;
+      return say('Thanks, ' + escapeHtml(cap(t.split(' ')[0])) + '! And the best <b>number</b> to send your gutter plan to?');
+    }
+    if (S.step === 3) {
+      var digits = t.replace(/\D/g, '');
+      if (digits.length < 7) {
+        return say('Hmm, that doesn\'t look like a complete number &mdash; mind double-checking it? <i>(digits only is fine)</i>');
+      }
+      S.gutter.phone = t;
+      return finishGutterQuiz();
+    }
+  }
+
+  function finishGutterQuiz() {
+    var q = S.gutter;
+    saveLead({
+      name: q.name,
+      phone: q.phone,
+      topic: 'Gutter quiz — qualified lead',
+      details: 'Gutter ' + q.gutter + ' · Concern ' + q.concern,
+      source: 'gutter quiz'
+    });
+    S.mode = 'idle'; S.step = 0; S.gutter = {};
+    return sayMany([
+      { html: '<b>&#9989; Quiz complete!</b> &#128167;<br><br>Here&rsquo;s your gutter profile:' },
+      {
+        dash: [
+          ['Gutter', q.gutter],
+          ['Concern', q.concern]
+        ]
+      },
+      {
+        html: 'I&rsquo;ll put together your <b>personalized gutter plan</b> built around your gutter situation and concern and send it to your number, plus what to have ready for the visit (photos of any overflow or sagging and your gutters&rsquo; approximate age, if you have them handy), so the visit is all signal, no guesswork. ' +
+          'Your <b>free inspection</b> produces an <b>exact written quote</b> before any work starts &mdash; <b>no surprise bills</b>, ever. ' +
+          'That&rsquo;s the whole point &mdash; <b>every visitor becomes an inspection</b>, not a job lost to the roofer down the street. Anything else I can help with?',
+        chips: defaultChips()
+      }
+    ]);
+  }
+
   /* ---------- main router ---------- */
   function route(text) {
     var t = text.toLowerCase().trim();
@@ -967,11 +1041,21 @@
     if (S.mode === 'storm') return stormStep(text);
     if (S.mode === 'replace') return replaceStep(text);
     if (S.mode === 'insurance') return insuranceStep(text);
+    if (S.mode === 'gutter') return gutterStep(text);
     if (S.mode === 'review' && S.step === 1) return reviewStep(text);
 
     if (has(t, 'book', 'schedul', 'appoint', 'sign me up', 'slot', 'i need an inspection', 'need an inspection', 'get a quote', 'need a quote', 'want a quote', 'get an estimate', 'check my roof', 'look at my roof', 'free inspection')) return startBooking();
     if (has(t, 'after hour', 'after-hour', 'closed', 'late night', 'midnight', '11:42')) return startAfterHours();
-    /* 60-sec insurance-claim quiz: trigger FIRST among quiz triggers — the chip
+    /* 60-sec gutter quiz: trigger FIRST among quiz triggers — the chip value
+       'gutter quiz' contains 'gutter', so the repair branch ('repair', 'fix',
+       'leak', ..., 'gutter') would otherwise hijack it into repairHtml, and
+       it contains 'quiz', so the roof quiz's word-start 'quiz' match would
+       hijack it too (the word-start 'buy' prefix bug class caught on
+       real-estate, 2026-10-20). Bare 'gutter'/'gutters' alone do NOT match
+       the phrase 'gutter quiz', so the repair branch stays intact. */
+    if (has(t, 'gutter quiz')) return startGutterQuiz();
+    /* 60-sec insurance-claim quiz: trigger after the gutter-quiz trigger and
+       before the replacement-quiz trigger AND the storm-damage branch — the chip
        value 'insurance quiz' contains 'insurance'/'claim', so the storm-damage
        branch would otherwise hijack it into stormHtml, and it contains 'quiz',
        so the roof quiz's word-start 'quiz' match would hijack it too (the
